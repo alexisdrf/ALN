@@ -262,7 +262,7 @@ footer{border-top:1px solid var(--line-strong);padding:64px 40px 36px;margin-top
 .pilot-photo{width:100%;aspect-ratio:3/4;object-fit:cover;opacity:.85;transition:opacity .3s,transform .6s,filter .4s;filter:grayscale(.2)}
 .pilot-card:hover .pilot-photo{opacity:1;transform:scale(1.03);filter:grayscale(0)}
 .pilot-info{padding:24px 22px 28px}
-.pilot-number{font-family:'Anton',sans-serif;font-size:64px;line-height:1;color:#fff;position:absolute;top:14px;right:16px;pointer-events:none;z-index:3;text-shadow:0 2px 12px rgba(0,0,0,.85),0 0 24px rgba(14,143,96,.4);letter-spacing:.02em;font-weight:400;-webkit-text-stroke:1px rgba(14,143,96,.6)}
+.pilot-number{font-family:'Anton',sans-serif;font-size:60px;line-height:1;color:rgba(255,255,255,.85);position:absolute;top:14px;right:16px;pointer-events:none;z-index:3;text-shadow:0 2px 8px rgba(0,0,0,.7);letter-spacing:.02em;font-weight:400;-webkit-text-stroke:.5px rgba(14,143,96,.35);mix-blend-mode:luminosity;opacity:.78}
 .pilot-name-row{display:flex;align-items:center;gap:10px;margin-bottom:6px}
 .pilot-flag{width:24px;height:18px;display:inline-block;flex-shrink:0;border:1px solid rgba(255,255,255,.15);object-fit:cover;background:#222}
 .pilot-flag-empty{width:24px;height:18px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;border:1px solid rgba(255,255,255,.1);font-size:8px;color:var(--txt-low);font-family:'JetBrains Mono',monospace;background:#1a1a1a}
@@ -634,17 +634,7 @@ footer{border-top:1px solid var(--line-strong);padding:64px 40px 36px;margin-top
 
   <header class="section-header">
     <div>
-      <p class="section-eyebrow">// 03 &mdash; GALLERY</p>
-      <h2 class="section-title">ON <span class="acc">TRACK</span></h2>
-    </div>
-    <div class="section-meta">SEASON CAPTURES<br><strong style="color:var(--accent-bright)" id="gallery-count">&mdash; PHOTOS</strong></div>
-  </header>
-  <div class="gallery" id="gallery"></div>
-  <button class="add-btn" onclick="addGallery()">+ ADD GALLERY ITEM</button>
-
-  <header class="section-header">
-    <div>
-      <p class="section-eyebrow">// 04 &mdash; GLOBAL ROSTER</p>
+      <p class="section-eyebrow">// 03 &mdash; GLOBAL ROSTER</p>
       <h2 class="section-title">DRIVERS <span class="acc">WORLDWIDE</span></h2>
     </div>
     <div class="section-meta">PRESENCE<br><strong style="color:var(--accent-bright)" id="map-countries-count">&mdash; COUNTRIES</strong></div>
@@ -668,6 +658,16 @@ footer{border-top:1px solid var(--line-strong);padding:64px 40px 36px;margin-top
       <div class="map-country-list" id="map-country-list"></div>
     </div>
   </section>
+
+  <header class="section-header">
+    <div>
+      <p class="section-eyebrow">// 04 &mdash; GALLERY</p>
+      <h2 class="section-title">ON <span class="acc">TRACK</span></h2>
+    </div>
+    <div class="section-meta">SEASON CAPTURES<br><strong style="color:var(--accent-bright)" id="gallery-count">&mdash; PHOTOS</strong></div>
+  </header>
+  <div class="gallery" id="gallery"></div>
+  <button class="add-btn" onclick="addGallery()">+ ADD GALLERY ITEM</button>
 
   <footer>
     <div class="footer-grid">
@@ -833,7 +833,7 @@ const COUNTRIES = [
   {code:"HK",name:"Hong Kong",lat:22.3,lng:114.2,region:"asia"},
   {code:"HU",name:"Hungary",lat:47,lng:19.5,region:"europe"},
   {code:"IS",name:"Iceland",lat:65,lng:-18,region:"europe"},
-  {code:"IN",name:"India",lat:21,lng:78,region:"asia"},
+  {code:"IN",name:"India",lat:21,lng:78,region:"europe"},
   {code:"ID",name:"Indonesia",lat:-2,lng:118,region:"asia"},
   {code:"IE",name:"Ireland",lat:53.4,lng:-8,region:"europe"},
   {code:"IL",name:"Israel",lat:31,lng:35,region:"asia"},
@@ -1113,11 +1113,15 @@ async function requestPasswordReset(){
     });
     if(!res.ok){
       const j = await res.json().catch(()=>({}));
-      errEl.textContent = j.error_description || j.message || 'Reset failed.';
+      if(res.status===429){
+        errEl.textContent='Too many requests \u2014 please wait an hour or check your email.';
+      } else {
+        errEl.textContent = j.error_description || j.message || j.msg || 'Reset failed.';
+      }
       infoEl.textContent='';
       return;
     }
-    infoEl.textContent='\u2713 Reset email sent! Check your inbox.';
+    infoEl.textContent='\u2713 Reset email sent! Check your inbox & spam folder.';
     errEl.textContent='';
   }catch(e){
     errEl.textContent = e.message || 'Network error \u2014 try again.';
@@ -1443,7 +1447,7 @@ function renderWorldMap(data){
   const e0=document.getElementById('map-countries-count');if(e0)e0.textContent=countryCodes.length+' COUNTRIES';
   const e1=document.getElementById('ms-countries');if(e1)e1.textContent=countryCodes.length;
   const e2=document.getElementById('ms-drivers');if(e2)e2.textContent=totalDrivers;
-  const e3=document.getElementById('ms-continents');if(e3)e3.textContent=continents.size;
+  const e3=document.getElementById('ms-continents');if(e3)e3.textContent='5';
 
   let svg='<svg class="worldmap-svg" viewBox="0 0 1000 500" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet"><defs><radialGradient id="pinGrad"><stop offset="0%" stop-color="#14c785" stop-opacity="1"/><stop offset="100%" stop-color="#0e8f60" stop-opacity=".3"/></radialGradient></defs>';
   // Base map image — embedded, accurate continent shapes
@@ -1690,7 +1694,7 @@ async function saveInlineResult(id,field,value){
 }
 
 /* ---- PILOTS ---- */
-const REGIONS=[{key:'europe',label:'EUROPE'},{key:'america',label:'AMERICA'},{key:'asia',label:'ASIA / OCEANIA'}];
+const REGIONS=[{key:'europe',label:'EMEA'},{key:'america',label:'N&S AMERICA'},{key:'asia',label:'ASIA / OCEANIA'}];
 
 function renderPilots(data){
   const root=document.getElementById('pilots-content');root.innerHTML='';
