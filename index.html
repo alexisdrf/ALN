@@ -926,10 +926,23 @@ let editCB = null;
 let realtimeChannel = null;
 
 /* ---- DATA LAYER ---- */
-// Direct REST helper — bypasses Supabase JS client wrapper to avoid DataCloneError.
+// Get auth token safely without triggering DataCloneError
+function getAuthToken(){
+  try{
+    // Try localStorage directly — Supabase stores session there
+    const keys = Object.keys(localStorage);
+    const sbKey = keys.find(k=>k.startsWith('sb-') && k.endsWith('-auth-token'));
+    if(sbKey){
+      const session = JSON.parse(localStorage.getItem(sbKey));
+      if(session && session.access_token) return session.access_token;
+    }
+  }catch(e){}
+  return SUPABASE_KEY;
+}
+
+// Direct REST helper — bypasses Supabase JS client to avoid DataCloneError
 async function sbREST(path, options={}){
-  const { data:{ session } } = await sb.auth.getSession();
-  const token = session && session.access_token ? session.access_token : SUPABASE_KEY;
+  const token = getAuthToken();
   const headers = {
     'apikey': SUPABASE_KEY,
     'Authorization': 'Bearer ' + token,
@@ -1035,17 +1048,25 @@ window.addEventListener('unhandledrejection',function(e){
 
 /* ---- AUTH ---- */
 async function bootstrapAuth(){
-  const { data:{ session } } = await sb.auth.getSession();
-  if(session && session.user){
-    CU = session.user;
-    await loadProfile();
-  }
-  sb.auth.onAuthStateChange(async (_event, session)=>{
-    if(session && session.user){CU = session.user;await loadProfile();}
-    else{CU=null;PROFILE=null;}
-    updateUI();
-    renderCurrentPage();
-  });
+  try{
+    // Read existing session directly from localStorage — no Supabase client calls
+    const keys = Object.keys(localStorage);
+    const sbKey = keys.find(k=>k.startsWith('sb-')&&k.endsWith('-auth-token'));
+    if(sbKey){
+      const session = JSON.parse(localStorage.getItem(sbKey)||'null');
+      if(session && session.user && session.access_token){
+        // Check not expired
+        const expiresAt = session.expires_at||0;
+        if(Math.floor(Date.now()/1000) < expiresAt){
+          CU = session.user;
+          await loadProfile();
+        } else {
+          // Session expired — clear it
+          localStorage.removeItem(sbKey);
+        }
+      }
+    }
+  }catch(e){ console.warn('bootstrapAuth:', e.message||e); }
 }
 async function loadProfile(){
   if(!CU)return;
@@ -1068,8 +1089,20 @@ function canEditPilot(pid){
 }
 
 async function logout(){
-  await sb.auth.signOut();
-  CU = null; PROFILE = null;
+  try{
+    const token = getAuthToken();
+    await fetch(SUPABASE_URL+'/auth/v1/logout', {
+      method:'POST',
+      headers:{'apikey':SUPABASE_KEY,'Authorization':'Bearer '+token}
+    });
+  }catch(e){}
+  // Clear stored session
+  try{
+    const keys = Object.keys(localStorage);
+    const sbKey = keys.find(k=>k.startsWith('sb-')&&k.endsWith('-auth-token'));
+    if(sbKey) localStorage.removeItem(sbKey);
+  }catch(e){}
+  CU=null; PROFILE=null;
   updateUI();
   renderCurrentPage();
   showToast('Logged out');
@@ -1116,18 +1149,43 @@ async function doLogin(){
   if(!email || !pw){errEl.textContent='Email and password required.';return;}
   submitBtn.disabled=true; infoEl.textContent='Authenticating...';
   try{
-    const { data, error } = await sb.auth.signInWithPassword({email, password:pw});
-    if(error){errEl.textContent=error.message||'Login failed.';infoEl.textContent='';submitBtn.disabled=false;return;}
-    if(data && data.user){
-      CU = data.user; await loadProfile();
-      closeAuthModal();
-      updateUI();
-      renderCurrentPage();
-      showToast('Welcome back, '+(CU.email||'').split('@')[0]);
+    // Use direct REST for login to avoid DataCloneError / Failed to fetch from Supabase client
+    const res = await fetch(SUPABASE_URL+'/auth/v1/token?grant_type=password', {
+      method:'POST',
+      headers:{
+        'apikey': SUPABASE_KEY,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({email, password:pw})
+    });
+    const json = await res.json();
+    if(!res.ok || json.error){
+      errEl.textContent = json.error_description || json.message || json.error || 'Login failed.';
+      infoEl.textContent='';
+      submitBtn.disabled=false;
+      return;
     }
+    // Store session manually in localStorage so getAuthToken() can find it
+    const sbStorageKey = 'sb-'+SUPABASE_URL.split('//')[1].split('.')[0]+'-auth-token';
+    localStorage.setItem(sbStorageKey, JSON.stringify({
+      access_token: json.access_token,
+      refresh_token: json.refresh_token,
+      expires_at: Math.floor(Date.now()/1000) + (json.expires_in||3600),
+      token_type: json.token_type||'bearer',
+      user: json.user
+    }));
+    CU = json.user;
+    await loadProfile();
+    closeAuthModal();
+    updateUI();
+    renderCurrentPage();
+    showToast('Welcome back, '+(CU.email||'').split('@')[0]);
   }catch(e){
-    errEl.textContent=e.message||'Login failed.';
-  }finally{submitBtn.disabled=false;infoEl.textContent='';}
+    errEl.textContent = e.message||'Login failed. Check your connection.';
+  }finally{
+    submitBtn.disabled=false;
+    infoEl.textContent='';
+  }
 }
 
 /* ---- PAGE NAV ---- */
