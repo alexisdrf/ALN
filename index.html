@@ -179,6 +179,9 @@ nav{position:fixed;top:0;left:0;right:0;z-index:100;display:flex;align-items:cen
 .worldmap-wrap{position:relative;background:var(--bg-card);border:1px solid var(--line-strong);overflow:hidden}
 .worldmap-svg{width:100%;height:auto;display:block;background:radial-gradient(ellipse at center,rgba(14,143,96,.18) 0%,rgba(7,7,7,.4) 70%,transparent 100%);min-height:240px}
 .country-pin-pulse{animation:pinPulse 2.5s infinite;transform-origin:center;transform-box:fill-box;-webkit-transform-origin:center;-webkit-transform-box:fill-box}
+.country-pin-group.draggable{cursor:grab}
+.country-pin-group.draggable:active{cursor:grabbing}
+.admin-mode .worldmap-wrap::before{content:'\1F4CD ADMIN: drag pins to fine-tune positions';position:absolute;top:10px;left:14px;z-index:10;font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.15em;text-transform:uppercase;color:var(--accent-bright);background:rgba(7,7,7,.85);padding:5px 10px;border:1px solid var(--accent);pointer-events:none}
 .map-tooltip{position:absolute;pointer-events:none;background:rgba(7,7,7,.97);border:1px solid var(--accent);padding:10px 14px;font-family:'JetBrains Mono',monospace;font-size:11px;color:#fff;letter-spacing:.06em;z-index:20;display:none;box-shadow:0 8px 24px rgba(0,0,0,.6);min-width:160px}
 .map-tooltip.show{display:block;animation:fadeIn .15s}
 .map-tooltip .tt-name{color:#fff;font-weight:500;display:flex;align-items:center;gap:8px;margin-bottom:6px;font-family:'Anton',sans-serif;font-size:14px;letter-spacing:.04em}
@@ -913,7 +916,8 @@ const DEFAULTS={
     {label:'INSTAGRAM',href:'https://www.instagram.com/alien_motorsport',target:'_blank'},
     {label:'TIKTOK',href:'https://www.tiktok.com/@alien.motorsport',target:'_blank'},
     {label:'X (TWITTER)',href:'https://x.com/ALN_Motorsport',target:'_blank'}
-  ]
+  ],
+  pinOffsets:{}
 };
 
 /* ---- STATE ---- */
@@ -987,6 +991,8 @@ function mergeDefaults(remote){
   if(Array.isArray(out.pilots)){
     out.pilots.forEach((p,i)=>{if(typeof p.sortOrder!=='number')p.sortOrder=i;});
   }
+  // Ensure pinOffsets exists
+  if(!out.pinOffsets) out.pinOffsets = {};
   return out;
 }
 async function saveData(){
@@ -1420,9 +1426,13 @@ function renderWorldMap(data){
   svg+='<line x1="0" y1="250" x2="1000" y2="250" stroke="rgba(14,143,96,.25)" stroke-width=".7" stroke-dasharray="4,4"/>';
   countryCodes.forEach(code=>{
     const c=getCountry(code);if(!c)return;
-    const [x,y]=projXY(c.lat,c.lng);
+    let [x,y]=projXY(c.lat,c.lng);
+    // Apply saved offset if any
+    const offsets = (data.pinOffsets||{})[code];
+    if(offsets){x+=(offsets.dx||0);y+=(offsets.dy||0);}
     const cnt=counts[code];const r=Math.min(8+cnt*1.8,16);
-    svg+='<g class="country-pin-group" data-code="'+code+'" style="cursor:pointer">';
+    const draggable = isAdmin();
+    svg+='<g class="country-pin-group'+(draggable?' draggable':'')+'" data-code="'+code+'" data-base-x="'+(x-((offsets&&offsets.dx)||0)).toFixed(2)+'" data-base-y="'+(y-((offsets&&offsets.dy)||0)).toFixed(2)+'" style="cursor:'+(draggable?'grab':'pointer')+'">';
     svg+='<circle class="country-pin-pulse" cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" r="'+(r+6)+'" fill="rgba(20,199,133,.25)"/>';
     svg+='<circle cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" r="'+r+'" fill="#14c785" stroke="#fff" stroke-width="2"/>';
     svg+='<text x="'+x.toFixed(1)+'" y="'+(y+1).toFixed(1)+'" text-anchor="middle" dominant-baseline="middle" font-family="Anton" font-size="'+Math.max(10,r-2)+'" fill="#070707" pointer-events="none" font-weight="700">'+cnt+'</text>';
@@ -1437,8 +1447,11 @@ function renderWorldMap(data){
     g.addEventListener('mouseenter',(e)=>showTooltip(e,code,counts[code],driversByCountry[code]||[]));
     g.addEventListener('mousemove',(e)=>moveTooltip(e));
     g.addEventListener('mouseleave',hideTooltip);
-    // Touch support
     g.addEventListener('touchstart',(e)=>{showTooltip(e.touches[0],code,counts[code],driversByCountry[code]||[]);},{passive:true});
+    // Admin drag support
+    if(isAdmin()){
+      attachPinDrag(g,code);
+    }
   });
   const list=document.getElementById('map-country-list');
   if(list){
@@ -1470,6 +1483,84 @@ function moveTooltip(e){
   tt.style.left=x+'px';tt.style.top=y+'px';
 }
 function hideTooltip(){const tt=document.getElementById('map-tooltip');if(tt)tt.classList.remove('show');}
+
+// Admin pin dragging — adjust country pin positions
+let pinDragState = null;
+function attachPinDrag(group, code){
+  const startDrag = (clientX, clientY)=>{
+    if(!isAdmin())return;
+    hideTooltip();
+    const wrap = document.getElementById('worldmap-svg-wrap');
+    const svg = wrap.querySelector('svg');
+    const rect = svg.getBoundingClientRect();
+    const baseX = parseFloat(group.getAttribute('data-base-x'));
+    const baseY = parseFloat(group.getAttribute('data-base-y'));
+    const offsets = (DATA.pinOffsets||{})[code]||{dx:0,dy:0};
+    pinDragState = {
+      group, code, svg, rect, baseX, baseY,
+      startX: clientX, startY: clientY,
+      startDx: offsets.dx||0, startDy: offsets.dy||0
+    };
+    group.style.cursor='grabbing';
+    document.body.style.userSelect='none';
+  };
+  
+  group.addEventListener('mousedown',(e)=>{
+    e.preventDefault();
+    startDrag(e.clientX, e.clientY);
+  });
+  group.addEventListener('touchstart',(e)=>{
+    if(!isAdmin())return;
+    if(e.touches.length===1){
+      e.preventDefault();
+      startDrag(e.touches[0].clientX, e.touches[0].clientY);
+    }
+  },{passive:false});
+}
+
+function handlePinDragMove(clientX, clientY){
+  if(!pinDragState)return;
+  const s = pinDragState;
+  // Convert pixel delta to SVG units (viewBox is 1000x500)
+  const scaleX = 1000 / s.rect.width;
+  const scaleY = 500 / s.rect.height;
+  const dxSvg = (clientX - s.startX) * scaleX;
+  const dySvg = (clientY - s.startY) * scaleY;
+  const newDx = s.startDx + dxSvg;
+  const newDy = s.startDy + dySvg;
+  const newX = s.baseX + newDx;
+  const newY = s.baseY + newDy;
+  // Update pin visually in real-time
+  const circles = s.group.querySelectorAll('circle');
+  const text = s.group.querySelector('text');
+  circles.forEach(c=>{c.setAttribute('cx',newX);c.setAttribute('cy',newY);});
+  if(text){text.setAttribute('x',newX);text.setAttribute('y',newY+1);}
+  s.currentDx = newDx;
+  s.currentDy = newDy;
+}
+
+async function handlePinDragEnd(){
+  if(!pinDragState)return;
+  const s = pinDragState;
+  s.group.style.cursor='grab';
+  document.body.style.userSelect='';
+  if(typeof s.currentDx === 'number' && typeof s.currentDy === 'number'){
+    // Save the new offset
+    DATA.pinOffsets = DATA.pinOffsets || {};
+    // Round to whole pixels for cleanliness
+    DATA.pinOffsets[s.code] = {dx:Math.round(s.currentDx*10)/10, dy:Math.round(s.currentDy*10)/10};
+    if(await saveData()){
+      showToast('Pin moved \u2014 saved');
+    }
+  }
+  pinDragState = null;
+}
+
+// Global drag listeners
+document.addEventListener('mousemove',(e)=>{if(pinDragState)handlePinDragMove(e.clientX,e.clientY);});
+document.addEventListener('mouseup',()=>{if(pinDragState)handlePinDragEnd();});
+document.addEventListener('touchmove',(e)=>{if(pinDragState && e.touches[0]){e.preventDefault();handlePinDragMove(e.touches[0].clientX,e.touches[0].clientY);}},{passive:false});
+document.addEventListener('touchend',()=>{if(pinDragState)handlePinDragEnd();});
 
 /* ---- CONTENT MODAL ---- */
 function openCM(tag,title,body){document.getElementById('cm-tag').textContent=tag;document.getElementById('cm-title').textContent=title;document.getElementById('cm-body').textContent=body;document.getElementById('cm-overlay').classList.add('open');}
