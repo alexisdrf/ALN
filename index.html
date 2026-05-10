@@ -1683,7 +1683,7 @@ function addPilot(defaultRegion){
     {key:'games',label:'Games (select all that apply)',type:'games',value:[]},
     {key:'age',label:'Age',value:'',type:'number'},
     {key:'bio',label:'Bio',type:'textarea',value:''},
-    {key:'authUserId',label:'Linked Supabase User ID (optional, for portal access)',value:'',placeholder:'Paste UUID from Supabase dashboard'}
+    {key:'authUserId',label:'Supabase User UID (paste from Authentication \u2014 Users)',value:'',placeholder:'e.g. 14c74d29-1c7f-4c30-8a9e-b3a78e3ade3d'}
   ],async ()=>{
     DATA.pilots=DATA.pilots||[];
     const region=ef('region');
@@ -1695,18 +1695,24 @@ function addPilot(defaultRegion){
       sortOrder:regionPilots.length
     };
     DATA.pilots.push(newPilot);
-    if(await saveData()){
-      // If admin provided a linked auth user, set their pilot_id
-      const linkedUid=ef('authUserId').trim();
-      if(linkedUid){
-        try{
-          const { error } = await sb.from('profiles').update({pilot_id:newId}).eq('id',linkedUid);
-          if(error)showToast('Driver added \u2014 link failed: '+error.message);
-          else showToast('Driver added & linked');
-        }catch(e){showToast('Driver added \u2014 link failed');}
-      }else{showToast('Driver added');}
-      renderPilots(DATA);renderWorldMap(DATA);
+    if(!(await saveData())){return;}
+    // Auto-link via RPC function
+    const linkedUid=ef('authUserId').trim();
+    if(linkedUid){
+      try{
+        await sbREST('rpc/link_pilot',{
+          method:'POST',
+          body:{p_user_id:linkedUid,p_pilot_id:newId}
+        });
+        showToast('Driver added & linked \u2014 they can now login');
+      }catch(e){
+        console.error('link_pilot:',e.message||e);
+        showToast('Driver added but link failed: '+(e.message||'check UID'));
+      }
+    }else{
+      showToast('Driver added (no portal access)');
     }
+    renderPilots(DATA);renderWorldMap(DATA);
   });
 }
 
