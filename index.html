@@ -764,6 +764,9 @@ footer{border-top:1px solid var(--line-strong);padding:64px 40px 36px;margin-top
     <button class="auth-submit" id="auth-submit-btn" onclick="doLogin()">ENTER &rarr;</button>
     <div class="auth-error font-mono" id="auth-error"></div>
     <div class="auth-info font-mono" id="auth-info"></div>
+    <div style="text-align:center;margin-top:18px;padding-top:18px;border-top:1px solid var(--line)">
+      <button type="button" onclick="requestPasswordReset()" style="background:none;border:none;color:var(--txt-low);font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.15em;cursor:pointer;padding:6px;text-transform:uppercase;transition:color .15s" onmouseover="this.style.color='var(--accent-bright)'" onmouseout="this.style.color='var(--txt-low)'">Forgot password?</button>
+    </div>
   </div>
 </div>
 
@@ -1092,6 +1095,34 @@ function canEditPilot(pid){
   if(isAdmin())return true;
   if(!PROFILE)return false;
   return PROFILE.pilot_id === pid;
+}
+
+async function requestPasswordReset(){
+  const email = document.getElementById('auth-email').value.trim();
+  const errEl = document.getElementById('auth-error');
+  const infoEl = document.getElementById('auth-info');
+  errEl.textContent=''; infoEl.textContent='';
+  if(!email){errEl.textContent='Enter your email above first.';return;}
+  if(!email.includes('@')){errEl.textContent='Invalid email format.';return;}
+  infoEl.textContent='Sending reset email...';
+  try{
+    const res = await fetch(SUPABASE_URL+'/auth/v1/recover',{
+      method:'POST',
+      headers:{'apikey':SUPABASE_KEY,'Content-Type':'application/json'},
+      body: JSON.stringify({email, redirect_to: window.location.origin + window.location.pathname})
+    });
+    if(!res.ok){
+      const j = await res.json().catch(()=>({}));
+      errEl.textContent = j.error_description || j.message || 'Reset failed.';
+      infoEl.textContent='';
+      return;
+    }
+    infoEl.textContent='\u2713 Reset email sent! Check your inbox.';
+    errEl.textContent='';
+  }catch(e){
+    errEl.textContent = e.message || 'Network error \u2014 try again.';
+    infoEl.textContent='';
+  }
 }
 
 async function logout(){
@@ -1816,6 +1847,7 @@ function editPilotFull(id){
   if(!canEditPilot(id))return;
   const p=DATA.pilots.find(x=>x.id===id);if(!p)return;
   const fields=[
+    {key:'number',label:'Race Number',value:p.number||'00'},
     {key:'name',label:'Full Name',value:p.name},
     {key:'handle',label:'In-game Handle',value:p.handle},
     {key:'country',label:'Country',type:'country',value:p.country||''},
@@ -1823,9 +1855,11 @@ function editPilotFull(id){
     {key:'age',label:'Age',value:p.age||'',type:'number'},
     {key:'bio',label:'Bio',type:'textarea',value:p.bio}
   ];
-  if(isAdmin()){fields.unshift({key:'number',label:'Race Number',value:p.number});fields.push({key:'role',label:'Role',value:p.role});fields.push({key:'region',label:'Region',type:'select',value:p.region,options:REGIONS.map(r=>({value:r.key,label:r.label}))});}
+  if(isAdmin()){fields.push({key:'role',label:'Role',value:p.role});fields.push({key:'region',label:'Region',type:'select',value:p.region,options:REGIONS.map(r=>({value:r.key,label:r.label}))});}
   openEditModal('EDIT \u2014 '+p.name,fields,async ()=>{
-    if(isAdmin()){p.number=ef('number');p.role=ef('role');
+    p.number=ef('number');
+    if(isAdmin()){
+      p.role=ef('role');
       const newRegion=ef('region');
       if(newRegion!==p.region){
         const newRegionPilots=DATA.pilots.filter(x=>x.region===newRegion);
@@ -1860,7 +1894,8 @@ async function savePilotRecord(p){
         age: p.age||'',
         country: p.country||'',
         games: p.games||[],
-        photo: p.photo||''
+        photo: p.photo||'',
+        number: p.number||'00'
       }}
     });
     return true;
@@ -1986,10 +2021,47 @@ document.getElementById('cm-overlay').addEventListener('click',e=>{if(e.target==
 document.addEventListener('click',e=>{if(!e.target.closest('.flag-picker'))document.querySelectorAll('.flag-picker.open').forEach(p=>p.classList.remove('open'));});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeEditModal();closeCM();closeAuthModal();closeMobileMenu();document.querySelectorAll('.flag-picker.open').forEach(p=>p.classList.remove('open'));}});
 
+/* ---- PASSWORD RECOVERY FLOW ---- */
+async function checkRecoveryToken(){
+  // Supabase puts recovery token in the URL hash: #access_token=...&type=recovery
+  const hash = window.location.hash;
+  if(!hash || hash.indexOf('type=recovery')===-1) return false;
+  const params = new URLSearchParams(hash.substring(1));
+  const accessToken = params.get('access_token');
+  if(!accessToken) return false;
+  // Clear the hash from URL
+  history.replaceState(null,'',window.location.pathname+window.location.search);
+  // Prompt user for new password
+  setTimeout(()=>{
+    openEditModal('SET NEW PASSWORD',[
+      {key:'newpw',label:'New Password (min 6 chars)',type:'password',value:''},
+      {key:'confirm',label:'Confirm Password',type:'password',value:''}
+    ],async ()=>{
+      const np=ef('newpw'); const cp=ef('confirm');
+      if(np.length<6){showToast('Password too short');return;}
+      if(np!==cp){showToast('Passwords don\u2019t match');return;}
+      try{
+        const res = await fetch(SUPABASE_URL+'/auth/v1/user',{
+          method:'PUT',
+          headers:{'apikey':SUPABASE_KEY,'Authorization':'Bearer '+accessToken,'Content-Type':'application/json'},
+          body: JSON.stringify({password:np})
+        });
+        if(!res.ok){
+          const j = await res.json().catch(()=>({}));
+          showToast('Failed: '+(j.message||j.error_description||'try again'));
+          return;
+        }
+        showToast('\u2713 Password updated! Please login.');
+        setTimeout(()=>openAuthModal(),800);
+      }catch(e){showToast('Error: '+(e.message||e));}
+    });
+  },500);
+  return true;
+}
+
 /* ---- INIT ---- */
 (async function init(){
   const ls = document.getElementById('loading-screen');
-  // Safety net: always hide loading after 8s no matter what
   const safetyTimer = setTimeout(()=>{
     if(ls)ls.classList.add('hidden');
     if(!DATA){DATA=JSON.parse(JSON.stringify(DEFAULTS));updateUI();showPage('home');}
@@ -2000,6 +2072,8 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeEditModal();cl
     setupRealtime();
     updateUI();
     showPage('home');
+    // Check if user came from a password recovery link
+    checkRecoveryToken();
   }catch(e){
     console.error('Init failed:',e.message||e);
     DATA = JSON.parse(JSON.stringify(DEFAULTS));
