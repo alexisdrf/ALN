@@ -259,7 +259,7 @@ footer{border-top:1px solid var(--line-strong);padding:64px 40px 36px;margin-top
 .pilot-photo{width:100%;aspect-ratio:3/4;object-fit:cover;opacity:.85;transition:opacity .3s,transform .6s,filter .4s;filter:grayscale(.2)}
 .pilot-card:hover .pilot-photo{opacity:1;transform:scale(1.03);filter:grayscale(0)}
 .pilot-info{padding:24px 22px 28px}
-.pilot-number{font-family:'Anton',sans-serif;font-size:56px;line-height:1;color:rgba(14,143,96,.18);position:absolute;top:16px;right:18px;pointer-events:none}
+.pilot-number{font-family:'Anton',sans-serif;font-size:64px;line-height:1;color:#fff;position:absolute;top:14px;right:16px;pointer-events:none;z-index:3;text-shadow:0 2px 12px rgba(0,0,0,.85),0 0 24px rgba(14,143,96,.4);letter-spacing:.02em;font-weight:400;-webkit-text-stroke:1px rgba(14,143,96,.6)}
 .pilot-name-row{display:flex;align-items:center;gap:10px;margin-bottom:6px}
 .pilot-flag{width:24px;height:18px;display:inline-block;flex-shrink:0;border:1px solid rgba(255,255,255,.15);object-fit:cover;background:#222}
 .pilot-flag-empty{width:24px;height:18px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;border:1px solid rgba(255,255,255,.1);font-size:8px;color:var(--txt-low);font-family:'JetBrains Mono',monospace;background:#1a1a1a}
@@ -501,7 +501,7 @@ footer{border-top:1px solid var(--line-strong);padding:64px 40px 36px;margin-top
   .pilots-grid{grid-template-columns:1fr 1fr;gap:2px}
   .pilot-info{padding:18px 16px 22px}
   .pilot-name{font-size:20px}
-  .pilot-number{font-size:42px;top:12px;right:14px}
+  .pilot-number{font-size:48px;top:10px;right:12px}
   .pilot-stats{gap:10px}
   .pilot-bio{font-size:11px}
   .pilot-photo-btn,.pilot-del-btn,.pilot-drag-handle{font-size:7px;padding:5px 8px;min-height:28px}
@@ -1732,34 +1732,69 @@ function editPilotFull(id){
     if(isAdmin()){p.number=ef('number');p.role=ef('role');
       const newRegion=ef('region');
       if(newRegion!==p.region){
-        // Reset sortOrder when changing region
         const newRegionPilots=DATA.pilots.filter(x=>x.region===newRegion);
         p.sortOrder=newRegionPilots.length;
         p.region=newRegion;
       }
     }
     p.name=ef('name');p.handle=ef('handle');p.country=ef('country');p.games=efGames('games');p.age=ef('age');p.bio=ef('bio');
-    if(await saveData()){renderPilots(DATA);renderWorldMap(DATA);showToast('Profile updated');}
+    if(await savePilotRecord(p)){renderPilots(DATA);renderWorldMap(DATA);showToast('Profile updated');}
   });
 }
 
 async function deletePilot(id){
   if(!isAdmin())return;if(!confirm('Remove this driver?'))return;
   DATA.pilots=DATA.pilots.filter(p=>p.id!==id);
-  // Unlink from any profiles
-  try{await sb.from('profiles').update({pilot_id:null}).eq('pilot_id',id);}catch(e){}
   if(await saveData()){renderPilots(DATA);renderWorldMap(DATA);showToast('Driver removed');}
 }
+
+// Save helper — admin uses full saveData, drivers use RPC for their own pilot
+async function savePilotRecord(p){
+  if(isAdmin()){
+    return await saveData();
+  }
+  // Driver: call update_own_pilot RPC with their pilot data
+  try{
+    await sbREST('rpc/update_own_pilot',{
+      method:'POST',
+      body:{p_pilot_data:{
+        name: p.name||'',
+        handle: p.handle||'',
+        bio: p.bio||'',
+        age: p.age||'',
+        country: p.country||'',
+        games: p.games||[],
+        photo: p.photo||''
+      }}
+    });
+    return true;
+  }catch(e){
+    console.error('savePilotRecord:',e.message||e);
+    showToast('Save failed: '+(e.message||'check connection'));
+    return false;
+  }
+}
+
 async function savePilotInline(id,field,value){
   if(!canEditPilot(id))return;
   const p=DATA.pilots.find(x=>x.id===id);
-  if(p){p[field]=value.trim();if(await saveData()){if(document.getElementById('worldmap-svg-wrap'))renderWorldMap(DATA);showToast('Saved');}}
+  if(p){
+    p[field]=value.trim();
+    if(await savePilotRecord(p)){
+      if(document.getElementById('worldmap-svg-wrap'))renderWorldMap(DATA);
+      showToast('Saved');
+    }
+  }
 }
+
 function changePilotPhoto(id){
   if(!canEditPilot(id))return;
   fileCB=async b64=>{
     const p=DATA.pilots.find(x=>x.id===id);
-    if(p){p.photo=b64;if(await saveData()){renderPilots(DATA);showToast('Photo updated');}}
+    if(p){
+      p.photo=b64;
+      if(await savePilotRecord(p)){renderPilots(DATA);showToast('Photo updated');}
+    }
   };
   document.getElementById('file-input').click();
 }
